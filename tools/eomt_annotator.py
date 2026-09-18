@@ -2,6 +2,8 @@ import urllib.request
 import json
 import base64
 import io
+import os
+import sys
 import torch
 import cv2
 import numpy as np
@@ -12,16 +14,40 @@ from cvat_sdk.models import LabeledDataRequest, LabeledShapeRequest, ShapeType
 import rasterio.features
 from shapely.geometry import shape as shapely_shape, Polygon, MultiPolygon
 import topojson as tp
-import json
 
-CVAT_HOST = "http://localhost:8080"
-CVAT_USER = "hoap"
-CVAT_PASS = "1toi9a"
-TASK_ID = 12
-FRAMES_TO_ANNOTATE = [0]  # Process first 5 frames
-# FRAMES_TO_ANNOTATE = [0]  # Process all frames 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Đọc cấu hình từ .env hoặc biến môi trường; nếu không có thì mặc định dùng localhost:8080
+CVAT_HOST = os.getenv("CVAT_HOST", "http://localhost:8080")
+CVAT_AUTH = os.getenv("CVAT_AUTH", "hoap:1toi9a")
+if ":" in CVAT_AUTH:
+    CVAT_USER, CVAT_PASS = CVAT_AUTH.split(":", 1)
+else:
+    CVAT_USER, CVAT_PASS = CVAT_AUTH, ""
+CVAT_USER = os.getenv("CVAT_USER", CVAT_USER)
+CVAT_PASS = os.getenv("CVAT_PASS", CVAT_PASS)
+
+default_task_id = 38 if "localhost" in CVAT_HOST else 183
+default_job_id = 0 if "localhost" in CVAT_HOST else 1581
+
+TASK_ID = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.getenv("CVAT_TASK_ID", default_task_id))
+JOB_ID = int(sys.argv[2]) if len(sys.argv) > 2 else int(os.getenv("CVAT_JOB_ID", default_job_id))
 MIN_AREA_POLYGON = 80.0
 APPROX_EPSILON = 40.0
+
+# Danh sách các frame cần phải vẽ (nếu để None hoặc [] thì sẽ vẽ tất cả các frame trừ COMPLETED_FRAMES)
+# Ví dụ chỉ định cụ thể: TARGET_FRAMES = [1, 2, 3]
+TARGET_FRAMES = None
+# TARGET_FRAMES = [2]
+
+# Danh sách các frame đã xử lý xong (sẽ bỏ qua không chạy các frame này)
+COMPLETED_FRAMES = [
+    0
+]
 
 # Chỉ gán nhãn những vật thể hình khối rõ ràng, dễ nhận dạng (như yêu cầu trước)
 EASY_CLASSES = {
@@ -52,12 +78,41 @@ def contour_to_polyline(cnt):
     return None
 
 def run():
-    print(f"Connecting to CVAT at {CVAT_HOST}...")
+    target_desc = f"Job {JOB_ID} (Task {TASK_ID})" if JOB_ID else f"Task {TASK_ID}"
+    print(f"Connecting to CVAT at {CVAT_HOST} for {target_desc}...")
     with make_client(host=CVAT_HOST, credentials=(CVAT_USER, CVAT_PASS)) as client:
-        task = client.tasks.retrieve(TASK_ID)
-        labels = task.get_labels()
+        if JOB_ID:
+            target = client.jobs.retrieve(JOB_ID)
+            start_f = target.start_frame
+            stop_f = target.stop_frame
+        else:
+            target = client.tasks.retrieve(TASK_ID)
+            start_f = 0
+            stop_f = target.size - 1
+
+        labels = target.get_labels()
         name_to_id = {l.name: l.id for l in labels}
-        
+
+        # Tập hợp frame đã hoàn thành cần loại trừ
+        completed_frames = set(COMPLETED_FRAMES)
+
+        # Xác định danh sách frame cần vẽ
+        if TARGET_FRAMES:
+            candidate_frames = [f for f in TARGET_FRAMES if start_f <= f <= stop_f]
+        else:
+            candidate_frames = list(range(start_f, stop_f + 1))
+
+        frames_to_process = [f for f in candidate_frames if f not in completed_frames]
+        print(f"{target_desc} frames: {start_f} to {stop_f} (total {stop_f - start_f + 1})")
+        if TARGET_FRAMES:
+            print(f"Filter TARGET_FRAMES: {TARGET_FRAMES}")
+        print(f"Skipped completed frames ({len(completed_frames)}): {sorted(list(completed_frames))}")
+        print(f"Frames to process ({len(frames_to_process)}): {frames_to_process}")
+
+        if not frames_to_process:
+            print("No frames to process! Nothing to do.")
+            return
+
         print("Loading EoMT-DINOv3 model (Cityscapes Large)...")
         model_name = "tue-mps/cityscapes_semantic_eomt_large_1024"
         processor = EomtImageProcessor.from_pretrained(model_name)
@@ -69,18 +124,20 @@ def run():
         model.eval()
 
         id2label = model.config.id2label
-        all_shapes = []
-        
-        frames_list = FRAMES_TO_ANNOTATE if FRAMES_TO_ANNOTATE is not None else list(range(task.size))
-        for frame_idx in frames_list:
+
+        for frame_idx in frames_to_process:
             print(f"\n--- Processing Frame {frame_idx} (EoMT-DINOv3) ---")
-            auth_header = "Basic " + base64.b64encode(f"{CVAT_USER}:{CVAT_PASS}".encode()).decode("ascii")
-            req = urllib.request.Request(
-                f"{CVAT_HOST}/api/tasks/{TASK_ID}/data?type=frame&number={frame_idx}",
-                headers={"Authorization": auth_header},
-            )
-            with urllib.request.urlopen(req) as resp:
-                img = Image.open(io.BytesIO(resp.read())).convert("RGB")
+            try:
+                img = Image.open(target.get_frame(frame_idx)).convert("RGB")
+            except Exception:
+                auth_header = "Basic " + base64.b64encode(f"{CVAT_USER}:{CVAT_PASS}".encode()).decode("ascii")
+                data_endpoint = f"jobs/{JOB_ID}" if JOB_ID else f"tasks/{TASK_ID}"
+                req = urllib.request.Request(
+                    f"{CVAT_HOST}/api/{data_endpoint}/data?type=frame&number={frame_idx}",
+                    headers={"Authorization": auth_header},
+                )
+                with urllib.request.urlopen(req) as resp:
+                    img = Image.open(io.BytesIO(resp.read())).convert("RGB")
 
             inputs = processor(images=img, return_tensors="pt")
             inputs = {k: (v.to(device) if hasattr(v, 'to') else v) for k, v in inputs.items()}
@@ -93,6 +150,7 @@ def run():
 
             poly_count = 0
             polyline_count = 0
+            frame_shapes = []
             
             # Use rasterio to extract gapless polygons
             geom_results = list(rasterio.features.shapes(pred_seg, connectivity=4))
@@ -163,7 +221,7 @@ def run():
                                     occluded=False,
                                     outside=False,
                                 )
-                                all_shapes.append(shape)
+                                frame_shapes.append(shape)
                                 polyline_count += 1
                                 continue
                                 
@@ -180,14 +238,28 @@ def run():
                                 occluded=False,
                                 outside=False,
                             )
-                            all_shapes.append(shape)
+                            frame_shapes.append(shape)
                             poly_count += 1
 
             print(f"Frame {frame_idx}: created {poly_count} polygons and {polyline_count} polylines.")
 
-        print(f"\nClearing old annotations and uploading {len(all_shapes)} new shapes to Task {TASK_ID}...")
-        task.set_annotations(LabeledDataRequest(shapes=all_shapes))
-        print("Upload successful!")
+            # Incremental update: preserve existing annotations (especially Frame 0)
+            current_data = target.get_annotations()
+            updated_shapes = []
+            for s in current_data.shapes:
+                if s.frame != frame_idx:
+                    d = s.to_dict()
+                    d.pop('id', None)
+                    updated_shapes.append(LabeledShapeRequest(**d))
+            updated_shapes.extend(frame_shapes)
+            target.set_annotations(LabeledDataRequest(shapes=updated_shapes))
+
+            # Ghi nhận frame đã hoàn thành vào list trong code
+            if frame_idx not in COMPLETED_FRAMES:
+                COMPLETED_FRAMES.append(frame_idx)
+            print(f"Frame {frame_idx} uploaded to CVAT and added to completed list.")
+
+        print(f"\nAll specified frames for {target_desc} processed successfully!")
 
 if __name__ == "__main__":
     run()
