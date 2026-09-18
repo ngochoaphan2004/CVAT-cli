@@ -11,10 +11,12 @@ from cvat_sdk.models import LabeledDataRequest, LabeledShapeRequest, ShapeType
 import rasterio.features
 from shapely.geometry import shape as shapely_shape, Polygon, MultiPolygon
 
+import sys
+
 CVAT_HOST = "http://localhost:8080"
 CVAT_USER = "hoap"
 CVAT_PASS = "1toi9a"
-TASK_ID = 15  # Change to your Medium Task ID
+TASK_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 15
 FRAMES_TO_ANNOTATE = None
 MIN_AREA_POLYGON = 50.0
 APPROX_EPSILON = 2.0

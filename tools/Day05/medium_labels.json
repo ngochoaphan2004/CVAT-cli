@@ -1,0 +1,9 @@
+[
+  {"name": "person", "color": "#dc143c", "type": "any", "attributes": []},
+  {"name": "car", "color": "#00008e", "type": "any", "attributes": []},
+  {"name": "bus", "color": "#003c64", "type": "any", "attributes": []},
+  {"name": "truck", "color": "#000046", "type": "any", "attributes": []},
+  {"name": "motorcycle", "color": "#0000e6", "type": "any", "attributes": []},
+  {"name": "bicycle", "color": "#770b20", "type": "any", "attributes": []}
+]
+

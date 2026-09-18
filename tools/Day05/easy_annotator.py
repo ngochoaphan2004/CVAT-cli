@@ -12,15 +12,15 @@ import rasterio.features
 from shapely.geometry import shape as shapely_shape, Polygon, MultiPolygon
 import topojson as tp
 
+import sys
+
 CVAT_HOST = "http://localhost:8080"
 CVAT_USER = "hoap"
 CVAT_PASS = "1toi9a"
-TASK_ID = 14  # Change to your Easy Task ID
+TASK_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 14
 FRAMES_TO_ANNOTATE = None
 MIN_AREA_POLYGON = 50.0
 APPROX_EPSILON = 2.0
-
-EASY_CLASSES = {"road", "sidewalk", "building", "vegetation", "sky"}
 
 def contour_to_polyline(cnt):
     ys = cnt[:, :, 1].flatten()
@@ -83,7 +83,7 @@ def run():
             for geom, value in geom_results:
                 class_idx = int(value)
                 cls_name = id2label[class_idx]
-                if cls_name not in EASY_CLASSES or cls_name not in name_to_id:
+                if cls_name not in name_to_id:
                     continue
                 label_id = name_to_id[cls_name]
                 

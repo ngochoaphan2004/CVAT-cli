@@ -1,0 +1,8 @@
+[
+  {"name": "road", "color": "#804080", "type": "any", "attributes": []},
+  {"name": "sidewalk", "color": "#f423e8", "type": "any", "attributes": []},
+  {"name": "building", "color": "#464646", "type": "any", "attributes": []},
+  {"name": "vegetation", "color": "#6b8e23", "type": "any", "attributes": []},
+  {"name": "sky", "color": "#4682b4", "type": "any", "attributes": []}
+]
+
