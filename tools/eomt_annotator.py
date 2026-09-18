@@ -46,7 +46,7 @@ TARGET_FRAMES = None
 
 # Danh sách các frame đã xử lý xong (sẽ bỏ qua không chạy các frame này)
 COMPLETED_FRAMES = [
-    0
+    0, 1, 2, 3, 4
 ]
 
 # Chỉ gán nhãn những vật thể hình khối rõ ràng, dễ nhận dạng (như yêu cầu trước)
